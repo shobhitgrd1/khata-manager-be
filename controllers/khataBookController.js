@@ -147,7 +147,7 @@ exports.getKhataBooks = async (req, res) => {
       query.currentBalance = 0;
     }
 
-    // Top Summary calculation for this user
+    // Top Summary calculation for this user - grouped by accountType
     const summaryAgg = await KhataBook.aggregate([
       {
         $match: {
@@ -158,7 +158,7 @@ exports.getKhataBooks = async (req, res) => {
       },
       {
         $group: {
-          _id: null,
+          _id: '$accountType',
           totalAccounts: { $sum: 1 },
           totalToReceive: {
             $sum: {
@@ -174,19 +174,34 @@ exports.getKhataBooks = async (req, res) => {
       },
     ]);
 
-    const summary = summaryAgg.length > 0
-      ? {
-          totalAccounts: summaryAgg[0].totalAccounts || 0,
-          totalToReceive: Math.round((summaryAgg[0].totalToReceive || 0) * 100) / 100,
-          totalToPay: Math.round((summaryAgg[0].totalToPay || 0) * 100) / 100,
-          netBalance: Math.round(((summaryAgg[0].totalToReceive || 0) - (summaryAgg[0].totalToPay || 0)) * 100) / 100,
-        }
-      : {
-          totalAccounts: 0,
-          totalToReceive: 0,
-          totalToPay: 0,
-          netBalance: 0,
-        };
+    const buildSummary = (row) => {
+      const receive = Math.round((row?.totalToReceive || 0) * 100) / 100;
+      const pay = Math.round((row?.totalToPay || 0) * 100) / 100;
+      return {
+        totalAccounts: row?.totalAccounts || 0,
+        totalToReceive: receive,
+        totalToPay: pay,
+        netBalance: Math.round((receive - pay) * 100) / 100,
+      };
+    };
+
+    const dealerRow = summaryAgg.find((s) => s._id === 'Dealer');
+    const otherRow = summaryAgg.find((s) => s._id === 'Other');
+
+    const dealerSummary = buildSummary(dealerRow);
+    const otherSummary = buildSummary(otherRow);
+    const overallSummary = {
+      totalAccounts: (dealerSummary.totalAccounts || 0) + (otherSummary.totalAccounts || 0),
+      totalToReceive: Math.round(((dealerSummary.totalToReceive || 0) + (otherSummary.totalToReceive || 0)) * 100) / 100,
+      totalToPay: Math.round(((dealerSummary.totalToPay || 0) + (otherSummary.totalToPay || 0)) * 100) / 100,
+      netBalance: Math.round((((dealerSummary.totalToReceive || 0) + (otherSummary.totalToReceive || 0)) - ((dealerSummary.totalToPay || 0) + (otherSummary.totalToPay || 0))) * 100) / 100,
+    };
+
+    const activeSummary = accountType === 'Dealer'
+      ? dealerSummary
+      : accountType === 'Other'
+      ? otherSummary
+      : overallSummary;
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -213,7 +228,10 @@ exports.getKhataBooks = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      summary,
+      summary: activeSummary,
+      dealerSummary,
+      otherSummary,
+      overallSummary,
       accounts,
       pagination: {
         page: pageNum,

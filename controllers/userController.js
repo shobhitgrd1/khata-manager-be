@@ -1,5 +1,58 @@
 const User = require('../models/User');
 
+const ADMIN_PERMISSIONS = [
+  'dashboard',
+  'view_credit_cards',
+  'create_credit_card',
+  'edit_credit_card',
+  'delete_credit_card',
+  'view_accounts',
+  'create_account',
+  'edit_account',
+  'delete_account',
+  'view_dealers',
+  'create_dealer',
+  'edit_dealer',
+  'delete_dealer',
+  'view_products',
+  'create_product',
+  'edit_product',
+  'delete_product',
+  'view_orders',
+  'create_order',
+  'edit_order',
+  'delete_order',
+  'user',
+  'view_user',
+  'create_user',
+  'edit_user',
+  'delete_user',
+];
+
+const USER_PERMISSIONS = [
+  'dashboard',
+  'view_credit_cards',
+  'create_credit_card',
+  'edit_credit_card',
+  'delete_credit_card',
+  'view_accounts',
+  'create_account',
+  'edit_account',
+  'delete_account',
+  'view_dealers',
+  'create_dealer',
+  'edit_dealer',
+  'delete_dealer',
+  'view_products',
+  'create_product',
+  'edit_product',
+  'delete_product',
+  'view_orders',
+  'create_order',
+  'edit_order',
+  'delete_order',
+];
+
 /**
  * @desc    Get all users with server-side pagination, search, and sorting
  * @route   GET /api/users
@@ -281,10 +334,98 @@ const deleteUser = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Create a new user with Admin or User role
+ * @route   POST /api/users
+ * @access  Private (Admin only)
+ */
+const createUser = async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      username,
+      mobileNumber,
+      dateOfBirth,
+      password,
+      role = 'user',
+      status = 'active',
+    } = req.body;
+
+    if (!name || !email || !username || !password || !dateOfBirth) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields: Full Name, Email, Username, Password, and Date of Birth.',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.',
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedUsername = username.toLowerCase().trim();
+
+    // Check duplicate email
+    const emailExists = await User.findOne({ email: normalizedEmail });
+    if (emailExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email address is already in use by another user.',
+      });
+    }
+
+    // Check duplicate username
+    const usernameExists = await User.findOne({ username: normalizedUsername });
+    if (usernameExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username is already taken. Please choose another username.',
+      });
+    }
+
+    const chosenRole = role === 'admin' ? 'admin' : 'user';
+    const permissions = chosenRole === 'admin' ? ADMIN_PERMISSIONS : USER_PERMISSIONS;
+
+    const newUser = new User({
+      name: name.trim(),
+      email: normalizedEmail,
+      username: normalizedUsername,
+      mobileNumber: mobileNumber ? String(mobileNumber).trim() : '',
+      dateOfBirth: new Date(dateOfBirth),
+      password,
+      role: chosenRole,
+      permissions,
+      status: ['active', 'inactive', 'suspended'].includes(status) ? status : 'active',
+    });
+
+    await newUser.save();
+
+    const userObj = newUser.toObject();
+    delete userObj.password;
+
+    return res.status(201).json({
+      success: true,
+      message: `User created successfully as ${chosenRole === 'admin' ? 'Administrator' : 'Standard User'}.`,
+      user: userObj,
+    });
+  } catch (error) {
+    console.error('createUser error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Server error creating user.',
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUserStats,
   getUserById,
+  createUser,
   updateUser,
   deleteUser,
 };

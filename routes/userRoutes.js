@@ -4,20 +4,23 @@ const {
   getUsers,
   getUserStats,
   getUserById,
+  createUser,
   updateUser,
   deleteUser,
 } = require('../controllers/userController');
 const { protect } = require('../middleware/authMiddleware');
-const { requireRole, requirePermission } = require('../middleware/permissionMiddleware');
+const { requireRole } = require('../middleware/permissionMiddleware');
 
-// All routes are protected
+// All user management routes strictly require authentication and Admin role
 router.use(protect);
+router.use(requireRole('admin'));
 
 // Stats for dashboard
 router.get('/stats', getUserStats);
 
-// List users: strictly requires Admin role and 'user' or 'view_user' permission
-router.get('/', requireRole('admin'), requirePermission('user', 'view_user'), getUsers);
+// List users and create new user
+router.get('/', getUsers);
+router.post('/', createUser);
 
 // Get user details
 router.get('/:id', getUserById);
@@ -25,8 +28,8 @@ router.get('/:id', getUserById);
 // Update user details
 router.put('/:id', updateUser);
 
-// Delete user: strictly requires Admin role and 'delete_user' permission
-router.delete('/:id', requireRole('admin'), requirePermission('delete_user'), deleteUser);
+// Delete user
+router.delete('/:id', deleteUser);
 
 module.exports = router;
 

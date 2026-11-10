@@ -543,11 +543,17 @@ const getOrders = async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const skip = (pageNum - 1) * limitNum;
 
+    // Default sorting: In Process orders appear first, Delivered orders after, newest first
+    let sortOptions = { status: -1, orderDate: -1, createdAt: -1 };
+    if (sort && sort !== '-createdAt') {
+      sortOptions = sort;
+    }
+
     const [orders, totalCount] = await Promise.all([
       Order.find(query)
         .populate('accountId', 'fullName email mobileNumber accountType')
         .populate('creditCardId', 'bankName cardName lastFourDigits cardType cardOwner')
-        .sort(sort)
+        .sort(sortOptions)
         .skip(skip)
         .limit(limitNum),
       Order.countDocuments(query),
