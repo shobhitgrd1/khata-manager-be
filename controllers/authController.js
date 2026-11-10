@@ -12,7 +12,7 @@ const EMAIL_REGEX = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
  */
 const register = async (req, res) => {
   try {
-    const { name, email, username, password, confirmPassword, dateOfBirth } = req.body;
+    const { name, email, username, mobileNumber, password, confirmPassword, dateOfBirth } = req.body;
 
     // Validation
     if (!name || !email || !username || !password || !dateOfBirth) {
@@ -70,6 +70,7 @@ const register = async (req, res) => {
       name: name.trim(),
       email: cleanEmail,
       username: cleanUsername,
+      mobileNumber: mobileNumber ? String(mobileNumber).trim() : '',
       password,
       dateOfBirth: new Date(dateOfBirth),
       role: 'user',
@@ -110,10 +111,17 @@ const login = async (req, res) => {
     }
 
     const cleanIdentifier = identifier.trim().toLowerCase();
+    const digitsOnly = identifier.trim().replace(/\D/g, '');
 
-    // Find user by email or username, explicitly selecting password
+    const loginOr = [{ email: cleanIdentifier }, { username: cleanIdentifier }];
+    if (digitsOnly.length >= 7) {
+      const lastDigits = digitsOnly.length > 10 ? digitsOnly.slice(-10) : digitsOnly;
+      loginOr.push({ mobileNumber: { $regex: new RegExp(lastDigits + '$') } });
+    }
+
+    // Find user by email, username, or mobile number, explicitly selecting password
     const user = await User.findOne({
-      $or: [{ email: cleanIdentifier }, { username: cleanIdentifier }],
+      $or: loginOr,
     }).select('+password');
 
     if (!user) {
@@ -157,36 +165,30 @@ const login = async (req, res) => {
  */
 const forgotPasswordVerify = async (req, res) => {
   try {
-    const { email, dateOfBirth } = req.body;
+    const { email, identifier } = req.body;
+    const inputVal = (email || identifier || '').trim();
 
-    if (!email || !dateOfBirth) {
+    if (!inputVal) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide both registered email and date of birth',
+        message: 'Please provide your registered email address',
       });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const user = await User.findOne({ email: cleanEmail });
+    const cleanLower = inputVal.toLowerCase();
 
-    // Generic error to avoid revealing user existence when verification fails
-    const genericErrorMsg = 'Verification failed. Information provided does not match our records.';
+    // Find user by email (or username/mobile fallback if entered)
+    const user = await User.findOne({
+      $or: [
+        { email: cleanLower },
+        { username: cleanLower },
+      ],
+    });
 
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: genericErrorMsg,
-      });
-    }
-
-    // Compare date of birth (ignoring time component)
-    const userDob = new Date(user.dateOfBirth).toISOString().split('T')[0];
-    const inputDob = new Date(dateOfBirth).toISOString().split('T')[0];
-
-    if (userDob !== inputDob) {
-      return res.status(400).json({
-        success: false,
-        message: genericErrorMsg,
+        message: 'No account found with this email address.',
       });
     }
 
@@ -204,14 +206,14 @@ const forgotPasswordVerify = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Identity verified successfully. You may now reset your password.',
+      message: 'Email verified successfully. You may now reset your password.',
       resetToken,
     });
   } catch (error) {
     console.error('Forgot password verify error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Server error during identity verification',
+      message: 'Server error during password reset verification',
     });
   }
 };

@@ -178,7 +178,7 @@ const updateUser = async (req, res) => {
       });
     }
 
-    const { name, email, username, dateOfBirth, status, role, permissions } = req.body;
+    const { name, email, username, mobileNumber, phone, dateOfBirth, status, role, permissions } = req.body;
 
     // Check duplicate email if changed
     if (email && email.toLowerCase() !== user.email) {
@@ -211,6 +211,9 @@ const updateUser = async (req, res) => {
     }
 
     if (name) user.name = name.trim();
+    if (mobileNumber !== undefined || phone !== undefined) {
+      user.mobileNumber = String(mobileNumber || phone || '').trim();
+    }
     if (dateOfBirth) user.dateOfBirth = new Date(dateOfBirth);
 
     // CRITICAL SECURITY REQUIREMENT:

@@ -12,10 +12,10 @@ const authLimiter = rateLimit({
   },
 });
 
-// Stricter rate limit for password recovery
+// Stricter rate limit for password recovery (generous in development/testing)
 const forgotPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
+  max: 20, // limit each IP to 100 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   message: {
