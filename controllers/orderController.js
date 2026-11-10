@@ -29,6 +29,59 @@ const generateOrderId = async () => {
 };
 
 /**
+ * Record initial delivery transaction in KhataBook for an order
+ */
+const recordOrderDeliveryInKhataBook = async ({ order, userId, deliveryPrice, deliveryDate }) => {
+  if (!order || !order.dealerId) return null;
+
+  const linkedKb = await KhataBook.findOne({
+    userId,
+    dealerId: order.dealerId,
+    deletedAt: null,
+  });
+
+  if (!linkedKb) return null;
+
+  // Idempotency check: verify not already recorded with an active transaction for this order
+  let existingTx = await KhataTransaction.findOne({
+    userId,
+    khataBookId: linkedKb._id,
+    referenceType: 'Order',
+    referenceId: order._id.toString(),
+    deletedAt: null,
+    isReversed: false,
+  });
+
+  if (existingTx) return existingTx;
+
+  const productParts = [];
+  if (order.productNameSnapshot) productParts.push(order.productNameSnapshot);
+  if (order.variant) productParts.push(order.variant);
+  const colorName = typeof order.color === 'string' ? order.color : order.color?.colorName;
+  if (colorName) productParts.push(colorName);
+  const productDesc = productParts.length > 0 ? productParts.join(' - ') : 'Product';
+
+  const txAmount = Number(deliveryPrice !== undefined && deliveryPrice !== null ? deliveryPrice : order.deliveryPrice) || 0;
+  const txDate = deliveryDate ? new Date(deliveryDate) : (order.deliveryDate || new Date());
+
+  const newTx = new KhataTransaction({
+    userId,
+    khataBookId: linkedKb._id,
+    transactionType: 'MONEY_GIVEN',
+    amount: txAmount,
+    transactionDate: txDate,
+    paymentMode: 'Online Order',
+    description: `${productDesc} - Order #${order.orderId}`,
+    referenceType: 'Order',
+    referenceId: order._id.toString(),
+  });
+
+  await newTx.save();
+  await recalculateKhataBookBalance(linkedKb._id);
+  return newTx;
+};
+
+/**
  * @desc    Create a new order
  * @route   POST /api/orders
  * @access  Private (create_order or admin)
@@ -315,6 +368,20 @@ const createOrder = async (req, res) => {
       orderDate: finalOrderDate,
       deliveryDate: finalDeliveryDate,
     });
+
+    // If order was created as Delivered, add to KhataBook if dealer is linked
+    if (newOrder.status === 'Delivered' && req.body.addToKhataBook !== false && newOrder.dealerId) {
+      try {
+        await recordOrderDeliveryInKhataBook({
+          order: newOrder,
+          userId: req.user._id,
+          deliveryPrice: newOrder.deliveryPrice,
+          deliveryDate: newOrder.deliveryDate,
+        });
+      } catch (kbErr) {
+        console.error('Error adding order delivery to KhataBook on create:', kbErr);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -1165,6 +1232,22 @@ const updateOrder = async (req, res) => {
 
     await order.save();
 
+    // If order transitioned from Order In Process (or un-delivered) to Delivered, record delivery in Khata Book
+    if (previousSnapshot.status !== 'Delivered' && order.status === 'Delivered') {
+      if (req.body.addToKhataBook !== false && order.dealerId) {
+        try {
+          await recordOrderDeliveryInKhataBook({
+            order,
+            userId: req.user._id,
+            deliveryPrice: order.deliveryPrice,
+            deliveryDate: order.deliveryDate,
+          });
+        } catch (kbErr) {
+          console.error('Error adding order delivery to KhataBook from updateOrder:', kbErr);
+        }
+      }
+    }
+
     // If order was already Delivered and delivery price was changed, sync to Khata Book
     if (previousSnapshot.status === 'Delivered' && order.status === 'Delivered') {
       const prevDPrice = previousSnapshot.deliveryPrice || 0;
@@ -1300,48 +1383,14 @@ const deliverOrder = async (req, res) => {
 
     // If requested and dealer has a linked KhataBook account, add delivery price transaction
     let khataTransaction = null;
-    if (req.body.addToKhataBook && order.dealerId) {
+    if (req.body.addToKhataBook !== false && order.dealerId) {
       try {
-        const linkedKb = await KhataBook.findOne({
+        khataTransaction = await recordOrderDeliveryInKhataBook({
+          order,
           userId: req.user._id,
-          dealerId: order.dealerId,
-          deletedAt: null,
+          deliveryPrice: numericDeliveryPrice,
+          deliveryDate: parsedDeliveryDate,
         });
-
-        if (linkedKb) {
-          // Idempotency check: verify not already recorded for this order
-          let existingTx = await KhataTransaction.findOne({
-            userId: req.user._id,
-            khataBookId: linkedKb._id,
-            referenceType: 'Order',
-            referenceId: order._id.toString(),
-            deletedAt: null,
-          });
-
-          if (!existingTx) {
-            const productParts = [];
-            if (order.productNameSnapshot) productParts.push(order.productNameSnapshot);
-            if (order.variant) productParts.push(order.variant);
-            const colorName = typeof order.color === 'string' ? order.color : order.color?.colorName;
-            if (colorName) productParts.push(colorName);
-            const productDesc = productParts.length > 0 ? productParts.join(' - ') : 'Product';
-
-            existingTx = new KhataTransaction({
-              userId: req.user._id,
-              khataBookId: linkedKb._id,
-              transactionType: 'MONEY_GIVEN',
-              amount: numericDeliveryPrice,
-              transactionDate: parsedDeliveryDate,
-              paymentMode: 'Online Order',
-              description: `${productDesc} - Order #${order.orderId}`,
-              referenceType: 'Order',
-              referenceId: order._id.toString(),
-            });
-            await existingTx.save();
-            await recalculateKhataBookBalance(linkedKb._id);
-            khataTransaction = existingTx;
-          }
-        }
       } catch (kbErr) {
         console.error('Error adding order delivery to KhataBook:', kbErr);
       }

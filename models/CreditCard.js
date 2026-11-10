@@ -24,6 +24,7 @@ const creditCardSchema = new mongoose.Schema(
           'Axis Bank',
           'Kotak Mahindra Bank',
           'RBL Bank',
+          'AU Bank',
           'AU Small Finance Bank',
           'HSBC Bank',
           'State Bank of India (SBI)',
