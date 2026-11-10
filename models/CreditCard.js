@@ -60,9 +60,16 @@ const creditCardSchema = new mongoose.Schema(
       required: [true, 'Total credit limit is required'],
       min: [1, 'Total credit limit must be greater than zero'],
     },
+    usedLimit: {
+      type: Number,
+      default: 0,
+      min: [0, 'Used credit limit cannot be negative'],
+    },
     availableLimit: {
       type: Number,
-      required: [true, 'Available credit limit is required'],
+      default: function () {
+        return Math.max(0, (this.totalLimit || 0) - (this.usedLimit || 0));
+      },
       min: [0, 'Available credit limit cannot be negative'],
     },
   },
@@ -73,26 +80,25 @@ const creditCardSchema = new mongoose.Schema(
   }
 );
 
-// Virtual for used credit: Used Credit = Total Limit - Available Limit
-creditCardSchema.virtual('usedLimit').get(function () {
-  return Math.max(0, this.totalLimit - this.availableLimit);
+// Virtual for remaining credit limit: Remaining = Total Limit - Used Limit
+creditCardSchema.virtual('remainingLimit').get(function () {
+  return Math.max(0, (this.totalLimit || 0) - (this.usedLimit || 0));
 });
 
 // Virtual for utilization percentage: (Used Credit / Total Limit) * 100
 creditCardSchema.virtual('utilizationPercentage').get(function () {
   if (!this.totalLimit || this.totalLimit <= 0) return 0;
-  const used = Math.max(0, this.totalLimit - this.availableLimit);
+  const used = this.usedLimit || 0;
   return Math.min(100, Math.round((used / this.totalLimit) * 100));
 });
 
-// Pre-save validation: Available limit cannot exceed total limit
+// Pre-save validation: Keep usedLimit and availableLimit synchronized
 creditCardSchema.pre('validate', function () {
-  if (this.availableLimit !== undefined && this.totalLimit !== undefined) {
-    if (this.availableLimit > this.totalLimit) {
-      this.invalidate(
-        'availableLimit',
-        'Available credit limit cannot exceed the total credit limit'
-      );
+  if (this.totalLimit !== undefined) {
+    if (this.usedLimit === undefined && this.availableLimit !== undefined) {
+      this.usedLimit = Math.max(0, this.totalLimit - this.availableLimit);
+    } else if (this.usedLimit !== undefined) {
+      this.availableLimit = Math.max(0, this.totalLimit - this.usedLimit);
     }
   }
 });

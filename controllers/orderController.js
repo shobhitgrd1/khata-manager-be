@@ -6,6 +6,7 @@ const Account = require('../models/Account');
 const CreditCard = require('../models/CreditCard');
 const KhataBook = require('../models/KhataBook');
 const KhataTransaction = require('../models/KhataTransaction');
+const CreditCardTransaction = require('../models/CreditCardTransaction');
 const { recalculateKhataBookBalance } = require('./khataBookController');
 
 /**
@@ -71,9 +72,10 @@ const recordOrderDeliveryInKhataBook = async ({ order, userId, deliveryPrice, de
     amount: txAmount,
     transactionDate: txDate,
     paymentMode: 'Online Order',
-    description: `${productDesc} - Order #${order.orderId}`,
+    description: order.orderId ? `${productDesc} - Order #${order.orderId}` : productDesc,
     referenceType: 'Order',
     referenceId: order._id.toString(),
+    orderId: order.orderId || null,
   });
 
   await newTx.save();
@@ -92,12 +94,15 @@ const createOrder = async (req, res) => {
       dealerId,
       dealerAddressId,
       productId,
+      customProductName,
       variant,
       color,
       accountId,
       paymentMethod,
       creditCardId,
+      payUsingCreditCard = false,
       paymentDetails = {},
+      originalOrderId,
       purchasePrice,
       status = 'Order In Process',
       deliveryPrice,
@@ -154,43 +159,88 @@ const createOrder = async (req, res) => {
     }
 
     // 3. Validate Product, Variant, and Color
-    if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
-      return res.status(400).json({ success: false, message: 'Valid product ID is required.' });
-    }
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Selected product not found.' });
-    }
-    if (product.userId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Access denied to selected product.' });
-    }
+    let product = null;
+    let cleanVariant = '';
+    let colorObj = null;
 
-    if (!variant || !variant.trim()) {
-      return res.status(400).json({ success: false, message: 'Product variant is required.' });
-    }
-    const cleanVariant = variant.trim();
-    const matchedVariant = product.variants.find(
-      (v) => v.variantName.toLowerCase() === cleanVariant.toLowerCase()
-    );
-    if (!matchedVariant) {
-      return res.status(400).json({
-        success: false,
-        message: `Variant "${cleanVariant}" does not belong to product "${product.productName}".`,
-      });
-    }
+    if (productId === 'OTHER' || (!productId && customProductName) || customProductName) {
+      const trimmedCustomName = (customProductName || '').trim();
+      if (!trimmedCustomName) {
+        return res.status(400).json({ success: false, message: 'Custom product name is required.' });
+      }
 
-    const colorName = typeof color === 'string' ? color.trim() : color?.colorName?.trim();
-    if (!colorName) {
-      return res.status(400).json({ success: false, message: 'Product color is required.' });
-    }
-    const matchedColor = product.colors.find(
-      (c) => c.colorName.toLowerCase() === colorName.toLowerCase()
-    );
-    if (!matchedColor) {
-      return res.status(400).json({
-        success: false,
-        message: `Color "${colorName}" does not belong to product "${product.productName}".`,
+      // Check if product with this name already exists for user
+      product = await Product.findOne({
+        userId: req.user._id,
+        productName: { $regex: new RegExp(`^${trimmedCustomName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        deletedAt: null,
       });
+
+      cleanVariant = (variant && variant.trim()) || 'Standard';
+      const cName = (typeof color === 'string' ? color.trim() : color?.colorName?.trim()) || 'Standard';
+      const cCode = color?.colorCode || '#36CFFF';
+      colorObj = { colorName: cName, colorCode: cCode };
+
+      if (!product) {
+        // Automatically create custom product in Product section
+        product = new Product({
+          userId: req.user._id,
+          productName: trimmedCustomName,
+          variants: [{ variantName: cleanVariant }],
+          colors: [{ colorName: cName, colorCode: cCode }],
+        });
+        await product.save();
+      } else {
+        let modified = false;
+        if (!product.variants.some((v) => v.variantName.toLowerCase() === cleanVariant.toLowerCase())) {
+          product.variants.push({ variantName: cleanVariant });
+          modified = true;
+        }
+        if (!product.colors.some((c) => c.colorName.toLowerCase() === cName.toLowerCase())) {
+          product.colors.push({ colorName: cName, colorCode: cCode });
+          modified = true;
+        }
+        if (modified) await product.save();
+      }
+    } else {
+      if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
+        return res.status(400).json({ success: false, message: 'Valid product ID is required.' });
+      }
+      product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({ success: false, message: 'Selected product not found.' });
+      }
+      if (product.userId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Access denied to selected product.' });
+      }
+
+      cleanVariant = (variant && variant.trim()) || (product.variants?.length === 1 ? product.variants[0].variantName : '');
+      const matchedVariant = product.variants.find(
+        (v) => v.variantName.toLowerCase() === cleanVariant.toLowerCase()
+      );
+      if (!matchedVariant && product.variants?.length === 1) {
+        cleanVariant = product.variants[0].variantName;
+      } else if (!matchedVariant) {
+        return res.status(400).json({
+          success: false,
+          message: `Variant "${cleanVariant}" does not belong to product "${product.productName}".`,
+        });
+      }
+
+      const inputColorName = typeof color === 'string' ? color.trim() : color?.colorName?.trim() || (product.colors?.length === 1 ? product.colors[0].colorName : '');
+      let matchedColor = product.colors.find(
+        (c) => c.colorName.toLowerCase() === (inputColorName || '').toLowerCase()
+      );
+      if (!matchedColor && product.colors?.length === 1) {
+        matchedColor = product.colors[0];
+      }
+      if (!matchedColor) {
+        return res.status(400).json({
+          success: false,
+          message: `Color "${inputColorName}" does not belong to product "${product.productName}".`,
+        });
+      }
+      colorObj = { colorName: matchedColor.colorName, colorCode: matchedColor.colorCode || '#36CFFF' };
     }
 
     // 4. Validate Account
@@ -328,6 +378,7 @@ const createOrder = async (req, res) => {
     const newOrder = await Order.create({
       userId: req.user._id,
       orderId,
+      originalOrderId: (originalOrderId && typeof originalOrderId === 'string') ? originalOrderId.trim() : '',
       dealerId: dealer._id,
       dealerAddressId: selectedAddress._id ? selectedAddress._id.toString() : '',
       dealerNameSnapshot: dealer.dealerName,
@@ -342,11 +393,8 @@ const createOrder = async (req, res) => {
       },
       productId: product._id,
       productNameSnapshot: product.productName,
-      variant: matchedVariant.variantName,
-      color: {
-        colorName: matchedColor.colorName,
-        colorCode: matchedColor.colorCode || '#36CFFF',
-      },
+      variant: cleanVariant,
+      color: colorObj,
       accountId: account._id,
       accountNameSnapshot: account.fullName,
       accountTypeSnapshot: account.accountType || '',
@@ -354,6 +402,7 @@ const createOrder = async (req, res) => {
       accountEmailSnapshot: account.email || '',
       paymentMethod,
       creditCardId: finalCreditCardId,
+      payUsingCreditCard: Boolean(payUsingCreditCard),
       paymentDetails: finalPaymentDetails,
       purchasePrice: numericPurchasePrice,
       deliveryPrice: finalDeliveryPrice,
@@ -368,6 +417,44 @@ const createOrder = async (req, res) => {
       orderDate: finalOrderDate,
       deliveryDate: finalDeliveryDate,
     });
+
+    // Credit Card Payment handling
+    if (paymentMethod === 'Credit Card' && Boolean(payUsingCreditCard) && finalCreditCardId) {
+      try {
+        const card = await CreditCard.findById(finalCreditCardId);
+        if (card) {
+          const currentUsed = card.usedLimit !== undefined ? card.usedLimit : Math.max(0, (card.totalLimit || 0) - (card.availableLimit || 0));
+          card.usedLimit = currentUsed + numericPurchasePrice;
+          card.availableLimit = Math.max(0, card.totalLimit - card.usedLimit);
+          await card.save();
+
+          const ccTxDesc = newOrder.orderId
+            ? `Order #${newOrder.orderId} - ${product.productName} - ${dealer.dealerName} - ₹${numericPurchasePrice.toLocaleString('en-IN')}`
+            : `${product.productName} - ${dealer.dealerName} - ₹${numericPurchasePrice.toLocaleString('en-IN')}`;
+
+          const ccTx = new CreditCardTransaction({
+            userId: req.user._id,
+            creditCardId: card._id,
+            transactionType: 'USE_CARD',
+            amount: numericPurchasePrice,
+            transactionDate: finalOrderDate,
+            paymentMode: 'Credit Card',
+            description: ccTxDesc,
+            referenceType: 'Order',
+            referenceId: newOrder._id.toString(),
+            orderId: newOrder.orderId || null,
+            runningUsedLimit: card.usedLimit,
+            runningAvailableLimit: card.availableLimit,
+          });
+          await ccTx.save();
+
+          newOrder.creditCardTransactionId = ccTx._id;
+          await newOrder.save();
+        }
+      } catch (ccErr) {
+        console.error('Failed to deduct from credit card on createOrder:', ccErr);
+      }
+    }
 
     // If order was created as Delivered, add to KhataBook if dealer is linked
     if (newOrder.status === 'Delivered' && req.body.addToKhataBook !== false && newOrder.dealerId) {
@@ -527,6 +614,7 @@ const getOrders = async (req, res) => {
       const regex = new RegExp(cleanSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       query.$or = [
         { orderId: regex },
+        { originalOrderId: regex },
         { dealerNameSnapshot: regex },
         { productNameSnapshot: regex },
         { accountNameSnapshot: regex },
@@ -961,7 +1049,9 @@ const updateOrder = async (req, res) => {
       accountId,
       paymentMethod,
       creditCardId,
+      payUsingCreditCard,
       paymentDetails,
+      originalOrderId,
       purchasePrice,
       status,
       deliveryPrice,
@@ -987,7 +1077,14 @@ const updateOrder = async (req, res) => {
       color: order.color,
       accountId: order.accountId,
       paymentMethod: order.paymentMethod,
+      creditCardId: order.creditCardId ? order.creditCardId.toString() : null,
+      payUsingCreditCard: Boolean(order.payUsingCreditCard),
+      originalOrderId: order.originalOrderId || '',
     };
+
+    if (originalOrderId !== undefined) {
+      order.originalOrderId = typeof originalOrderId === 'string' ? originalOrderId.trim() : '';
+    }
 
     let priceChanged = false;
 
@@ -1157,7 +1254,43 @@ const updateOrder = async (req, res) => {
     }
 
     // Update Product if provided
-    if (productId && (productId !== order.productId?.toString() || variant || color)) {
+    if (productId === 'OTHER' || req.body.customProductName) {
+      const trimmedCustomName = (req.body.customProductName || '').trim();
+      if (trimmedCustomName) {
+        let product = await Product.findOne({
+          userId: req.user._id,
+          productName: { $regex: new RegExp(`^${trimmedCustomName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+          deletedAt: null,
+        });
+        const cleanVariant = (variant && variant.trim()) || order.variant || 'Standard';
+        const cName = (typeof color === 'string' ? color.trim() : color?.colorName?.trim()) || order.color?.colorName || 'Standard';
+
+        if (!product) {
+          product = new Product({
+            userId: req.user._id,
+            productName: trimmedCustomName,
+            variants: [{ variantName: cleanVariant }],
+            colors: [{ colorName: cName, colorCode: '#36CFFF' }],
+          });
+          await product.save();
+        } else {
+          let modified = false;
+          if (!product.variants.some((v) => v.variantName.toLowerCase() === cleanVariant.toLowerCase())) {
+            product.variants.push({ variantName: cleanVariant });
+            modified = true;
+          }
+          if (!product.colors.some((c) => c.colorName.toLowerCase() === cName.toLowerCase())) {
+            product.colors.push({ colorName: cName, colorCode: '#36CFFF' });
+            modified = true;
+          }
+          if (modified) await product.save();
+        }
+        order.productId = product._id;
+        order.productNameSnapshot = product.productName;
+        order.variant = cleanVariant;
+        order.color = { colorName: cName, colorCode: '#36CFFF' };
+      }
+    } else if (productId && (productId !== order.productId?.toString() || variant || color)) {
       if (!mongoose.Types.ObjectId.isValid(productId)) {
         return res.status(400).json({ success: false, message: 'Invalid product ID.' });
       }
@@ -1200,8 +1333,18 @@ const updateOrder = async (req, res) => {
     // Update Payment if provided
     if (paymentMethod) {
       order.paymentMethod = paymentMethod;
-      if (paymentMethod === 'Credit Card' && creditCardId) {
-        const card = await CreditCard.findById(creditCardId);
+      if (paymentMethod !== 'Credit Card') {
+        order.creditCardId = null;
+        if (paymentDetails) {
+          order.paymentDetails = paymentDetails;
+        }
+      }
+    }
+
+    if (order.paymentMethod === 'Credit Card') {
+      const targetCardId = creditCardId !== undefined ? creditCardId : order.creditCardId;
+      if (targetCardId) {
+        const card = await CreditCard.findById(targetCardId);
         if (card) {
           order.creditCardId = card._id;
           order.paymentDetails = {
@@ -1212,9 +1355,188 @@ const updateOrder = async (req, res) => {
             cardHolderName: card.cardOwner || '',
           };
         }
-      } else if (paymentDetails) {
+      } else {
         order.creditCardId = null;
-        order.paymentDetails = paymentDetails;
+      }
+    }
+
+    if (payUsingCreditCard !== undefined) {
+      order.payUsingCreditCard = Boolean(payUsingCreditCard);
+    }
+
+    // Synchronize Credit Card payment with incremental adjustments
+    const prevHadCardPay = Boolean(previousSnapshot.payUsingCreditCard) && Boolean(previousSnapshot.creditCardId);
+    const prevCardId = previousSnapshot.creditCardId ? previousSnapshot.creditCardId.toString() : null;
+    const prevPrice = Number(previousSnapshot.purchasePrice || 0);
+
+    const willCardPay =
+      order.paymentMethod === 'Credit Card' &&
+      Boolean(order.payUsingCreditCard) &&
+      Boolean(order.creditCardId);
+    const newCardId = order.creditCardId ? order.creditCardId.toString() : null;
+    const newPrice = Number(order.purchasePrice || 0);
+
+    if (prevHadCardPay && willCardPay && prevCardId === newCardId) {
+      // Scenario 1: Same credit card, price adjustment
+      const priceDiff = Math.round((newPrice - prevPrice) * 100) / 100;
+      if (priceDiff > 0) {
+        // Price increased: deduct only the additional amount
+        try {
+          const card = await CreditCard.findById(newCardId);
+          if (card) {
+            const currentUsed =
+              card.usedLimit !== undefined
+                ? card.usedLimit
+                : Math.max(0, (card.totalLimit || 0) - (card.availableLimit || 0));
+            card.usedLimit = currentUsed + priceDiff;
+            card.availableLimit = Math.max(0, card.totalLimit - card.usedLimit);
+            await card.save();
+
+            const ccTxDesc = order.orderId
+              ? `Order #${order.orderId} - Price Increase (+₹${priceDiff.toLocaleString('en-IN')}) - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`
+              : `Price Increase (+₹${priceDiff.toLocaleString('en-IN')}) - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`;
+
+            const adjTx = new CreditCardTransaction({
+              userId: req.user._id,
+              creditCardId: card._id,
+              transactionType: 'USE_CARD',
+              amount: priceDiff,
+              transactionDate: new Date(),
+              paymentMode: 'Credit Card',
+              description: ccTxDesc,
+              referenceType: 'Order',
+              referenceId: order._id.toString(),
+              orderId: order.orderId || null,
+              runningUsedLimit: card.usedLimit,
+              runningAvailableLimit: card.availableLimit,
+            });
+            await adjTx.save();
+            order.creditCardTransactionId = adjTx._id;
+          }
+        } catch (ccIncErr) {
+          console.error('Error applying incremental credit card deduction:', ccIncErr);
+        }
+      } else if (priceDiff < 0) {
+        // Price decreased: restore the difference
+        const absDiff = Math.abs(priceDiff);
+        try {
+          const card = await CreditCard.findById(newCardId);
+          if (card) {
+            const currentUsed =
+              card.usedLimit !== undefined
+                ? card.usedLimit
+                : Math.max(0, (card.totalLimit || 0) - (card.availableLimit || 0));
+            card.usedLimit = Math.max(0, currentUsed - absDiff);
+            card.availableLimit = Math.max(0, card.totalLimit - card.usedLimit);
+            await card.save();
+
+            const ccTxDesc = order.orderId
+              ? `Order #${order.orderId} - Price Adjustment (-₹${absDiff.toLocaleString('en-IN')}) - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`
+              : `Price Adjustment (-₹${absDiff.toLocaleString('en-IN')}) - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`;
+
+            const adjTx = new CreditCardTransaction({
+              userId: req.user._id,
+              creditCardId: card._id,
+              transactionType: 'PAY_CARD',
+              amount: absDiff,
+              transactionDate: new Date(),
+              paymentMode: 'Credit Card',
+              description: ccTxDesc,
+              referenceType: 'Order',
+              referenceId: order._id.toString(),
+              orderId: order.orderId || null,
+              runningUsedLimit: card.usedLimit,
+              runningAvailableLimit: card.availableLimit,
+            });
+            await adjTx.save();
+            order.creditCardTransactionId = adjTx._id;
+          }
+        } catch (ccDecErr) {
+          console.error('Error restoring credit card difference:', ccDecErr);
+        }
+      }
+      // If priceDiff === 0: NO change in price. Do nothing, avoid any duplicate transactions!
+    } else {
+      // Scenario 2: Different card, or card payment toggled off/on
+      if (prevHadCardPay && (!willCardPay || prevCardId !== newCardId)) {
+        try {
+          const prevCard = await CreditCard.findById(prevCardId);
+          if (prevCard) {
+            const currentUsed =
+              prevCard.usedLimit !== undefined
+                ? prevCard.usedLimit
+                : Math.max(0, (prevCard.totalLimit || 0) - (prevCard.availableLimit || 0));
+            prevCard.usedLimit = Math.max(0, currentUsed - prevPrice);
+            prevCard.availableLimit = Math.max(0, prevCard.totalLimit - prevCard.usedLimit);
+            await prevCard.save();
+
+            const cancelDesc = order.orderId
+              ? `Order #${order.orderId} - Payment Removed - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`
+              : `Payment Removed - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'}`;
+
+            const cancelTx = new CreditCardTransaction({
+              userId: req.user._id,
+              creditCardId: prevCard._id,
+              transactionType: 'PAY_CARD',
+              amount: prevPrice,
+              transactionDate: new Date(),
+              paymentMode: 'Credit Card',
+              description: cancelDesc,
+              referenceType: 'Order',
+              referenceId: order._id.toString(),
+              orderId: order.orderId || null,
+              runningUsedLimit: prevCard.usedLimit,
+              runningAvailableLimit: prevCard.availableLimit,
+            });
+            await cancelTx.save();
+          }
+          if (!willCardPay) {
+            order.payUsingCreditCard = false;
+            order.creditCardTransactionId = null;
+          }
+        } catch (ccRevertErr) {
+          console.error('Error reverting previous credit card limit:', ccRevertErr);
+        }
+      }
+
+      if (willCardPay && (!prevHadCardPay || prevCardId !== newCardId)) {
+        try {
+          const newCard = await CreditCard.findById(newCardId);
+          if (newCard) {
+            const currentUsed =
+              newCard.usedLimit !== undefined
+                ? newCard.usedLimit
+                : Math.max(0, (newCard.totalLimit || 0) - (newCard.availableLimit || 0));
+            newCard.usedLimit = currentUsed + newPrice;
+            newCard.availableLimit = Math.max(0, newCard.totalLimit - newCard.usedLimit);
+            await newCard.save();
+
+            const ccTxDesc = order.orderId
+              ? `Order #${order.orderId} - ${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'} - ₹${newPrice.toLocaleString('en-IN')}`
+              : `${order.productNameSnapshot || 'Product'} - ${order.dealerNameSnapshot || 'Dealer'} - ₹${newPrice.toLocaleString('en-IN')}`;
+
+            const newCcTx = new CreditCardTransaction({
+              userId: req.user._id,
+              creditCardId: newCard._id,
+              transactionType: 'USE_CARD',
+              amount: newPrice,
+              transactionDate: order.orderDate || new Date(),
+              paymentMode: 'Credit Card',
+              description: ccTxDesc,
+              referenceType: 'Order',
+              referenceId: order._id.toString(),
+              orderId: order.orderId || null,
+              runningUsedLimit: newCard.usedLimit,
+              runningAvailableLimit: newCard.availableLimit,
+            });
+            await newCcTx.save();
+
+            order.payUsingCreditCard = true;
+            order.creditCardTransactionId = newCcTx._id;
+          }
+        } catch (ccApplyErr) {
+          console.error('Error applying credit card transaction for new card:', ccApplyErr);
+        }
       }
     }
 
@@ -1467,9 +1789,10 @@ const syncDeliveryPriceToKhataBook = async ({
       amount: diff,
       transactionDate: txDate,
       paymentMode: 'Online Order',
-      description: `${productDesc} - Order #${order.orderId}`,
+      description: order.orderId ? `${productDesc} - Order #${order.orderId}` : productDesc,
       referenceType: 'Order',
       referenceId: order._id.toString(),
+      orderId: order.orderId || null,
       auditHistory: [
         {
           editedAt: new Date(),
@@ -1491,9 +1814,10 @@ const syncDeliveryPriceToKhataBook = async ({
       reversalDelta: diff, // negative delta e.g. -1000
       transactionDate: txDate,
       paymentMode: 'Online Order',
-      description: `${productDesc} - Order #${order.orderId}`,
+      description: order.orderId ? `${productDesc} - Order #${order.orderId}` : productDesc,
       referenceType: 'Order',
       referenceId: order._id.toString(),
+      orderId: order.orderId || null,
       isReversed: false, // Active adjustment entry that reduces balance
       auditHistory: [
         {
@@ -1690,6 +2014,28 @@ const deleteOrder = async (req, res) => {
       }
     } catch (reversalErr) {
       console.error('Failed to reverse KhataBook transaction for deleted order:', reversalErr);
+    }
+
+    // If order was paid using credit card, revert usedLimit and delete transaction
+    if (order.payUsingCreditCard && order.creditCardId) {
+      try {
+        const card = await CreditCard.findById(order.creditCardId);
+        if (card) {
+          const currentUsed =
+            card.usedLimit !== undefined
+              ? card.usedLimit
+              : Math.max(0, (card.totalLimit || 0) - (card.availableLimit || 0));
+          card.usedLimit = Math.max(0, currentUsed - (order.purchasePrice || 0));
+          card.availableLimit = Math.max(0, card.totalLimit - card.usedLimit);
+          await card.save();
+        }
+        await CreditCardTransaction.deleteMany({
+          referenceType: 'Order',
+          referenceId: order._id.toString(),
+        });
+      } catch (ccErr) {
+        console.error('Failed to revert credit card transaction for deleted order:', ccErr);
+      }
     }
 
     return res.status(200).json({

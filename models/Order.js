@@ -75,6 +75,12 @@ const orderSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    originalOrderId: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
     // Dealer
     dealerId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -156,6 +162,15 @@ const orderSchema = new mongoose.Schema(
     creditCardId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'CreditCard',
+      default: null,
+    },
+    payUsingCreditCard: {
+      type: Boolean,
+      default: false,
+    },
+    creditCardTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CreditCardTransaction',
       default: null,
     },
     paymentDetails: {

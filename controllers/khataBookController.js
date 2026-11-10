@@ -641,6 +641,17 @@ exports.addTransaction = async (req, res) => {
       });
     }
 
+    const cleanOrderId = req.body.orderId && typeof req.body.orderId === 'string' && req.body.orderId.trim()
+      ? req.body.orderId.trim()
+      : null;
+    let baseDesc = description ? description.trim() : '';
+    let finalDesc = baseDesc;
+    if (cleanOrderId) {
+      if (!baseDesc.toLowerCase().includes(cleanOrderId.toLowerCase())) {
+        finalDesc = baseDesc ? `Order #${cleanOrderId} - ${baseDesc}` : `Order #${cleanOrderId}`;
+      }
+    }
+
     const transaction = new KhataTransaction({
       userId,
       khataBookId: khataBook._id,
@@ -648,8 +659,9 @@ exports.addTransaction = async (req, res) => {
       amount: Math.round(numericAmount * 100) / 100,
       transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
       paymentMode: paymentMode || 'Cash',
-      description: description ? description.trim() : '',
-      referenceType: 'Manual',
+      description: finalDesc,
+      referenceType: cleanOrderId ? 'Order' : 'Manual',
+      orderId: cleanOrderId || null,
     });
 
     await transaction.save();
@@ -754,6 +766,16 @@ exports.recordPayment = async (req, res) => {
       .filter(Boolean)
       .join(' - ');
 
+    const cleanOrderId = req.body.orderId && typeof req.body.orderId === 'string' && req.body.orderId.trim()
+      ? req.body.orderId.trim()
+      : null;
+
+    let baseSettleDesc = fullDesc || (paymentType === 'PAYMENT_RECEIVED' ? 'Payment Received' : 'Payment Made');
+    let finalSettleDesc = baseSettleDesc;
+    if (cleanOrderId && !baseSettleDesc.toLowerCase().includes(cleanOrderId.toLowerCase())) {
+      finalSettleDesc = `Order #${cleanOrderId} - ${baseSettleDesc}`;
+    }
+
     const transaction = new KhataTransaction({
       userId,
       khataBookId: khataBook._id,
@@ -761,8 +783,9 @@ exports.recordPayment = async (req, res) => {
       amount: Math.round(numericAmount * 100) / 100,
       transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
       paymentMode: paymentMode || 'Cash',
-      description: fullDesc || (paymentType === 'PAYMENT_RECEIVED' ? 'Payment Received' : 'Payment Made'),
-      referenceType: 'Manual',
+      description: finalSettleDesc,
+      referenceType: cleanOrderId ? 'Order' : 'Manual',
+      orderId: cleanOrderId || null,
     });
 
     await transaction.save();

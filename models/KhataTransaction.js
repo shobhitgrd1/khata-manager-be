@@ -70,6 +70,12 @@ const khataTransactionSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    orderId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true,
+    },
     runningBalance: {
       type: Number,
       default: 0,
