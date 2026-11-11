@@ -11,25 +11,19 @@ const {
 const { protect } = require('../middleware/authMiddleware');
 const { requireRole } = require('../middleware/permissionMiddleware');
 
-// All user management routes strictly require authentication and Admin role
+// All user management routes require authentication
 router.use(protect);
-router.use(requireRole('admin'));
 
-// Stats for dashboard
-router.get('/stats', getUserStats);
+// Administrative User Management routes (strictly Admin only)
+router.get('/stats', requireRole('admin'), getUserStats);
+router.get('/', requireRole('admin'), getUsers);
+router.post('/', requireRole('admin'), createUser);
+router.delete('/:id', requireRole('admin'), deleteUser);
 
-// List users and create new user
-router.get('/', getUsers);
-router.post('/', createUser);
-
-// Get user details
+// User Profile / Details routes:
+// Admins can view/edit any user; Standard Users can view/edit their own profile
 router.get('/:id', getUserById);
-
-// Update user details
 router.put('/:id', updateUser);
-
-// Delete user
-router.delete('/:id', deleteUser);
 
 module.exports = router;
 

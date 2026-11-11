@@ -1,56 +1,52 @@
 const User = require('../models/User');
 
-const ADMIN_PERMISSIONS = [
+const USER_PERMISSIONS = [
   'dashboard',
-  'view_credit_cards',
-  'create_credit_card',
-  'edit_credit_card',
-  'delete_credit_card',
-  'view_accounts',
-  'create_account',
-  'edit_account',
-  'delete_account',
-  'view_dealers',
-  'create_dealer',
-  'edit_dealer',
-  'delete_dealer',
-  'view_products',
-  'create_product',
-  'edit_product',
-  'delete_product',
+  // Orders
   'view_orders',
   'create_order',
   'edit_order',
   'delete_order',
+  // Khata Book
+  'view_khatabook',
+  'create_khatabook',
+  'edit_khatabook',
+  'delete_khatabook',
+  'khatabook',
+  // Dealers
+  'view_dealers',
+  'create_dealer',
+  'edit_dealer',
+  'delete_dealer',
+  // Profit & Loss
+  'view_profit_loss',
+  'profit_loss',
+  // Credit Cards
+  'view_credit_cards',
+  'create_credit_card',
+  'edit_credit_card',
+  'delete_credit_card',
+  // Accounts
+  'view_accounts',
+  'create_account',
+  'edit_account',
+  'delete_account',
+  // Products
+  'view_products',
+  'create_product',
+  'edit_product',
+  'delete_product',
+];
+
+const ADMIN_PERMISSIONS = [
+  ...USER_PERMISSIONS,
+  // User Management (Admin only)
   'user',
   'view_user',
   'create_user',
   'edit_user',
   'delete_user',
-];
-
-const USER_PERMISSIONS = [
-  'dashboard',
-  'view_credit_cards',
-  'create_credit_card',
-  'edit_credit_card',
-  'delete_credit_card',
-  'view_accounts',
-  'create_account',
-  'edit_account',
-  'delete_account',
-  'view_dealers',
-  'create_dealer',
-  'edit_dealer',
-  'delete_dealer',
-  'view_products',
-  'create_product',
-  'edit_product',
-  'delete_product',
-  'view_orders',
-  'create_order',
-  'edit_order',
-  'delete_order',
+  'users',
 ];
 
 /**
@@ -181,7 +177,21 @@ const getUserStats = async (req, res) => {
  */
 const getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const targetUserId = req.params.id;
+    const isSelf = req.user._id.toString() === targetUserId;
+    const isAdmin = req.user.role === 'admin';
+    const hasViewPermission =
+      Array.isArray(req.user.permissions) &&
+      (req.user.permissions.includes('view_user') || req.user.permissions.includes('user'));
+
+    if (!isSelf && !(isAdmin && hasViewPermission)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not have permission to view this user profile',
+      });
+    }
+
+    const user = await User.findById(targetUserId);
 
     if (!user) {
       return res.status(404).json({

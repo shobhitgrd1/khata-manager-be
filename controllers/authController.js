@@ -5,6 +5,44 @@ const jwt = require('jsonwebtoken');
 // Email regex pattern
 const EMAIL_REGEX = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
 
+const STANDARD_USER_PERMISSIONS = [
+  'dashboard',
+  // Orders
+  'view_orders',
+  'create_order',
+  'edit_order',
+  'delete_order',
+  // Khata Book
+  'view_khatabook',
+  'create_khatabook',
+  'edit_khatabook',
+  'delete_khatabook',
+  'khatabook',
+  // Dealers
+  'view_dealers',
+  'create_dealer',
+  'edit_dealer',
+  'delete_dealer',
+  // Profit & Loss
+  'view_profit_loss',
+  'profit_loss',
+  // Credit Cards
+  'view_credit_cards',
+  'create_credit_card',
+  'edit_credit_card',
+  'delete_credit_card',
+  // Accounts
+  'view_accounts',
+  'create_account',
+  'edit_account',
+  'delete_account',
+  // Products
+  'view_products',
+  'create_product',
+  'edit_product',
+  'delete_product',
+];
+
 /**
  * @desc    Register a new user
  * @route   POST /api/auth/register
@@ -64,8 +102,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Security Rule: Default role MUST be user, permissions strictly ['dashboard']
-    // Users cannot self-assign admin role
+    // Standard User role receives all application permissions by default, excluding User Management
     const newUser = await User.create({
       name: name.trim(),
       email: cleanEmail,
@@ -74,13 +111,7 @@ const register = async (req, res) => {
       password,
       dateOfBirth: new Date(dateOfBirth),
       role: 'user',
-      permissions: [
-        'dashboard',
-        'view_credit_cards',
-        'create_credit_card',
-        'edit_credit_card',
-        'delete_credit_card',
-      ],
+      permissions: STANDARD_USER_PERMISSIONS,
       status: 'active',
     });
 
