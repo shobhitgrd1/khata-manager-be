@@ -88,6 +88,16 @@ const userSchema = new mongoose.Schema(
         'create_product',
         'edit_product',
         'delete_product',
+        // Notepad
+        'view_notepad',
+        'create_note',
+        'edit_note',
+        'delete_note',
+        'manage_folders',
+        'manage_tags',
+        'archive_notes',
+        'pin_notes',
+        'notepad',
       ],
     },
     status: {

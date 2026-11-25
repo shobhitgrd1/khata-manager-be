@@ -12,6 +12,7 @@ const dealerRoutes = require('./routes/dealerRoutes');
 const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const khataBookRoutes = require('./routes/khataBookRoutes');
+const notepadRoutes = require('./routes/notepadRoutes');
 
 // Initialize Express app
 const app = express();
@@ -66,6 +67,7 @@ app.use('/api/dealers', dealerRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/khatabook', khataBookRoutes);
+app.use('/api/notepad', notepadRoutes);
 
 // 404 handler for unknown API routes
 app.use((req, res) => {
